@@ -199,9 +199,22 @@ pub fn query_all_ids(
     type_name: &str,
     limits: &Limits,
 ) -> Result<Vec<JmapId>, JmapError> {
+    query_all_ids_paged(client, api_url, account_id, type_name, limits, &|_| {})
+}
+
+/// Like [`query_all_ids`], but reports each fetched page's size through
+/// `on_page` so long queries can drive a progress display.
+pub fn query_all_ids_paged(
+    client: &HttpClient,
+    api_url: &str,
+    account_id: &str,
+    type_name: &str,
+    limits: &Limits,
+    on_page: &dyn Fn(usize),
+) -> Result<Vec<JmapId>, JmapError> {
     let mut restarts = 0u32;
     loop {
-        match query_pages(client, api_url, account_id, type_name, limits) {
+        match query_pages(client, api_url, account_id, type_name, limits, on_page) {
             Ok(ids) => return Ok(ids),
             Err(JmapError::AnchorNotFound) if restarts < 2 => {
                 restarts += 1;
@@ -217,6 +230,7 @@ fn query_pages(
     account_id: &str,
     type_name: &str,
     limits: &Limits,
+    on_page: &dyn Fn(usize),
 ) -> Result<Vec<JmapId>, JmapError> {
     let limit = limits.max_objects_in_get.max(1);
     let mut collected: Vec<JmapId> = Vec::new();
@@ -248,6 +262,7 @@ fn query_pages(
                 .ok_or_else(|| JmapError::malformed("query id is not a string"))?;
             collected.push(JmapId(s.to_owned()));
         }
+        on_page(this_len);
         match page_size {
             None => {
                 if this_len == 0 {

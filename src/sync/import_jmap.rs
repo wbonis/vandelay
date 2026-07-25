@@ -302,6 +302,9 @@ fn reconcile_type(
         };
 
     let d = diff(&server_ids, &local_ids);
+    // The phase began without a total; now that the server has been listed
+    // the number of objects to fetch is known.
+    crate::progress::set_total(d.new.len() as u64);
 
     if ctx.dry_run() {
         dry_rows.push((

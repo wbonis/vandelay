@@ -103,6 +103,7 @@ pub fn reconcile(
             maps.insert(ty, *local, crate::jmap::wire::JmapId(tid.clone()));
             matched_uids.insert(uid.clone());
             state.counts.skipped += 1;
+            crate::progress::advance(1);
             continue;
         }
         let cid = format!("c{local}");
@@ -112,6 +113,7 @@ pub fn reconcile(
             Err(e) => {
                 logger.warn(&format!("{} local {local} skipped: {e}", ty.jmap_name()));
                 state.counts.failed += 1;
+                crate::progress::advance(1);
                 continue;
             }
         };
@@ -178,24 +180,21 @@ fn handle_result(
             ty.jmap_name()
         ));
         state.counts.failed += 1;
+        crate::progress::advance(1);
         return;
     };
-    let outcome = match retry_if_blob_missing(
-        net,
-        ty,
-        &cid,
-        &mut state.uploader,
-        touched,
-        outcome,
-        |up| build_wire(ctx, ty, local, maps, up),
-    ) {
-        Ok(o) => o,
-        Err(e) => {
-            logger.warn(&format!("{} local {local} skipped: {e}", ty.jmap_name()));
-            state.counts.failed += 1;
-            return;
-        }
-    };
+    let outcome =
+        match retry_if_blob_missing(net, ty, &cid, &mut state.uploader, touched, outcome, |up| {
+            build_wire(ctx, ty, local, maps, up)
+        }) {
+            Ok(o) => o,
+            Err(e) => {
+                logger.warn(&format!("{} local {local} skipped: {e}", ty.jmap_name()));
+                state.counts.failed += 1;
+                crate::progress::advance(1);
+                return;
+            }
+        };
     for (cid, v) in &outcome.created {
         if let Some(parsed) = cid.strip_prefix('c').and_then(|s| s.parse::<i64>().ok())
             && let Some(id) = jid(v)
@@ -208,6 +207,7 @@ fn handle_result(
         logger.warn(&format!("{} {cid} not created: {err}", ty.jmap_name()));
         state.counts.failed += 1;
     }
+    crate::progress::advance(1);
 }
 
 fn build_wire(

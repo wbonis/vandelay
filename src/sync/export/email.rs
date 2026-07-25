@@ -15,7 +15,7 @@ use crate::db;
 use crate::error::Error;
 use crate::jmap::blobxfer;
 use crate::jmap::error::JmapError;
-use crate::jmap::request::{Request, check_method_error, get_objects};
+use crate::jmap::request::{Request, check_method_error};
 use crate::jmap::session::Limits;
 use crate::jmap::wire::JmapId;
 use crate::logging::Logger;
@@ -103,21 +103,16 @@ pub fn reconcile(
         .filter_map(|(v, _)| jid(v).map(JmapId))
         .collect();
     if !fallback_ids.is_empty() {
-        let got = get_objects::<Value>(
-            &net.client,
-            &net.api,
-            &net.account,
-            ty.jmap_name(),
+        let got = super::common::get_objects_paged(
+            net,
+            ty,
             &fallback_ids,
             Some(&["messageId", "from", "subject", "sentAt", "to"]),
-            &net.limits,
+            "Email: fetch target (no message-id)",
         )
         .map_err(Error::from)?;
-        let by_id: HashMap<String, &Value> = got
-            .list
-            .iter()
-            .filter_map(|v| jid(v).map(|i| (i, v)))
-            .collect();
+        let by_id: HashMap<String, &Value> =
+            got.iter().filter_map(|v| jid(v).map(|i| (i, v))).collect();
         for (v, slot) in target_min.iter().zip(indices.iter_mut()) {
             if let Some(full) = jid(v).and_then(|i| by_id.get(&i)) {
                 *slot = server_index(full);
@@ -165,7 +160,15 @@ pub fn reconcile(
     let pool: Pool<Vec<ImportJob>, Vec<ImportResult>> = Pool::new(workers, {
         let net = Arc::new(net.clone());
         let cache = cache.clone();
-        move |jobs: Vec<ImportJob>| run_batch(&net, &cache, jobs)
+        // Progress advances here, on the worker as soon as a batch is done,
+        // rather than when the coordinator drains the result: the drain can
+        // lag several batches behind and would freeze the display.
+        move |jobs: Vec<ImportJob>| {
+            let n = jobs.len() as u64;
+            let out = run_batch(&net, &cache, jobs);
+            crate::progress::advance(n);
+            out
+        }
     });
     let window = workers * 2;
     let mut in_flight = 0usize;
@@ -278,16 +281,11 @@ fn run_batch(net: &Net, cache: &BlobCache, jobs: Vec<ImportJob>) -> Vec<ImportRe
         .iter()
         .map(|j| (j.cid.clone(), j.bytes.as_slice()))
         .collect();
-    let blobs = match email_batch::upload_batch(
-        &net.client,
-        &net.api,
-        &net.account,
-        &net.limits,
-        &items,
-    ) {
-        Ok(b) => b,
-        Err(_) => return per_message(net, cache, jobs),
-    };
+    let blobs =
+        match email_batch::upload_batch(&net.client, &net.api, &net.account, &net.limits, &items) {
+            Ok(b) => b,
+            Err(_) => return per_message(net, cache, jobs),
+        };
 
     // `Blob/upload` reports an exhausted upload quota as a method-level
     // `overQuota` inside a 200 response, which no retry layer sees. The upload
@@ -383,10 +381,13 @@ fn batch_outcome(
                 detail: format!("Blob/upload failed: {detail}"),
             })
         }
-        _ => Ok(imported.get(cid).cloned().unwrap_or(SingleImport::NotCreated {
-            error_type: String::new(),
-            detail: format!("Email/import returned no result for {cid}"),
-        })),
+        _ => Ok(imported
+            .get(cid)
+            .cloned()
+            .unwrap_or(SingleImport::NotCreated {
+                error_type: String::new(),
+                detail: format!("Email/import returned no result for {cid}"),
+            })),
     }
 }
 
@@ -494,7 +495,6 @@ fn invalidate(cache: &BlobCache, local_id: i64, stale: &JmapId) {
 }
 
 fn account(res: ImportResult, counts: &mut TypeCounts, logger: &Logger) {
-    crate::progress::advance(1);
     match res.outcome {
         Ok(SingleImport::Created) => counts.created += 1,
         Ok(SingleImport::Skipped) => counts.skipped += 1,

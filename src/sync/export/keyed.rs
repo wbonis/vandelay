@@ -40,11 +40,13 @@ fn run(
     for (local, key, wire) in local_rows {
         if target_keys.contains(&key) || !seen.insert(key) {
             counts.skipped += 1;
+            crate::progress::advance(1);
             continue;
         }
         batch.push((format!("c{local}"), wire));
     }
     if !batch.is_empty() {
+        let batch_len = batch.len() as u64;
         let outcome = create_batch(net, ty, batch).map_err(Error::from)?;
         counts.created += outcome.created.len() as u64;
         for (cid, err) in &outcome.not_created {
@@ -54,6 +56,7 @@ fn run(
             ));
             counts.skipped += 1;
         }
+        crate::progress::advance(batch_len);
     }
     Ok(Plan::default())
 }

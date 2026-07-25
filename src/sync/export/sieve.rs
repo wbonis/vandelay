@@ -62,6 +62,7 @@ pub fn reconcile(
         let matched = name.as_ref().and_then(|n| target_by_name.get(n)).cloned();
         let target_id = if let Some(id) = matched {
             counts.skipped += 1;
+            crate::progress::advance(1);
             id
         } else {
             let cid = format!("c{local}");
@@ -85,6 +86,7 @@ pub fn reconcile(
             match outcome.created.first().and_then(|(_, v)| jid(v)) {
                 Some(id) => {
                     counts.created += 1;
+                    crate::progress::advance(1);
                     if let Some(n) = name {
                         target_by_name.insert(n.clone(), id.clone());
                     }
@@ -95,6 +97,7 @@ pub fn reconcile(
                         logger.warn(&format!("SieveScript {cid} not created: {err}"));
                     }
                     counts.failed += 1;
+                    crate::progress::advance(1);
                     continue;
                 }
             }

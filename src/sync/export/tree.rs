@@ -184,6 +184,7 @@ pub fn reconcile(
         maps.insert(ty, *l, JmapId(tid.clone()));
     }
     counts.skipped += matched.len() as u64;
+    crate::progress::advance(matched.len() as u64);
 
     let by: HashMap<i64, Option<i64>> = locals.iter().map(|n| (n.local, n.parent)).collect();
     let mut to_create: Vec<&LocalNode> = locals
@@ -220,6 +221,7 @@ pub fn reconcile(
                                 p
                             ));
                             counts.failed += 1;
+                            crate::progress::advance(1);
                             continue;
                         }
                     },
@@ -236,6 +238,7 @@ pub fn reconcile(
                         logger,
                     );
                     counts.skipped += 1;
+                    crate::progress::advance(1);
                     continue;
                 }
                 let cid = format!("c{}", n.local);
@@ -249,6 +252,7 @@ pub fn reconcile(
                             n.local
                         ));
                         counts.failed += 1;
+                        crate::progress::advance(1);
                         continue;
                     }
                 };
@@ -272,6 +276,7 @@ pub fn reconcile(
                             n.local
                         ));
                         counts.failed += 1;
+                        crate::progress::advance(1);
                         continue;
                     }
                 };
@@ -301,6 +306,7 @@ pub fn reconcile(
                     logger.warn(&format!("{} {cid} not created: {err}", ty.jmap_name()));
                     counts.failed += 1;
                 }
+                crate::progress::advance(1);
             }
             continue;
         }
@@ -318,6 +324,7 @@ pub fn reconcile(
                             p
                         ));
                         counts.failed += 1;
+                        crate::progress::advance(1);
                         continue;
                     }
                 },
@@ -333,6 +340,7 @@ pub fn reconcile(
                     logger,
                 );
                 counts.skipped += 1;
+                crate::progress::advance(1);
                 continue;
             }
             match build_create(ctx, ty, n.local, maps, &mut uploader) {
@@ -361,12 +369,14 @@ pub fn reconcile(
                         n.local
                     ));
                     counts.failed += 1;
+                    crate::progress::advance(1);
                 }
             }
         }
         if batch.is_empty() {
             continue;
         }
+        let batch_len = batch.len() as u64;
         let outcome = create_batch(net, ty, batch).map_err(Error::from)?;
         for (cid, v) in &outcome.created {
             if let Some(local) = cid.strip_prefix('c').and_then(|s| s.parse::<i64>().ok())
@@ -394,6 +404,7 @@ pub fn reconcile(
             logger.warn(&format!("{} {cid} not created: {err}", ty.jmap_name()));
             counts.failed += 1;
         }
+        crate::progress::advance(batch_len);
     }
 
     let objs: Vec<crate::sync::prune::TargetObj> = targets

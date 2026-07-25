@@ -16,7 +16,9 @@ use crate::jmap::blobxfer;
 use crate::jmap::connect::{self, Connected};
 use crate::jmap::error::JmapError;
 use crate::jmap::http::HttpClient;
-use crate::jmap::request::{Request, SetRequest, get_all, get_objects, query_all_ids, set_call};
+use crate::jmap::request::{
+    Request, SetRequest, get_all, get_objects, query_all_ids_paged, set_call,
+};
 use crate::jmap::session::{Limits, Session};
 use crate::jmap::wire::JmapId;
 use crate::logging::{LEVEL_DEFAULT, Logger};
@@ -449,31 +451,70 @@ mod email_batch;
 mod common {
     use super::*;
 
+    /// Lists and fetches every object of `ty` on the target. Both stages run
+    /// as nested progress phases: on a re-run against a populated server this
+    /// scan dominates the wall time, and without its own reporting the type's
+    /// progress line would sit at 0% until the scan is over.
     pub fn target_query_get(
         net: &Net,
         ty: ObjectType,
         props: Option<&[&str]>,
     ) -> Result<Vec<Value>, JmapError> {
-        let ids = query_all_ids(
+        crate::progress::start(&format!("{}: query target", ty.jmap_name()), None);
+        let ids = query_all_ids_paged(
             &net.client,
             &net.api,
             &net.account,
             ty.jmap_name(),
             &net.limits,
-        )?;
+            &|n| crate::progress::advance(n as u64),
+        );
+        crate::progress::finish();
+        let ids = ids?;
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        let got = get_objects::<Value>(
-            &net.client,
-            &net.api,
-            &net.account,
-            ty.jmap_name(),
+        get_objects_paged(
+            net,
+            ty,
             &ids,
             props,
-            &net.limits,
-        )?;
-        Ok(got.list)
+            &format!("{}: fetch target", ty.jmap_name()),
+        )
+    }
+
+    /// Fetches `ids` chunk by chunk under a nested progress phase, so a large
+    /// server-side fetch shows movement instead of a frozen counter.
+    pub fn get_objects_paged(
+        net: &Net,
+        ty: ObjectType,
+        ids: &[JmapId],
+        props: Option<&[&str]>,
+        label: &str,
+    ) -> Result<Vec<Value>, JmapError> {
+        crate::progress::start(label, Some(ids.len() as u64));
+        let res = (|| {
+            let chunk = net.limits.max_objects_in_get.max(1) as usize;
+            let mut out = Vec::with_capacity(ids.len());
+            for c in ids.chunks(chunk) {
+                out.extend(
+                    get_objects::<Value>(
+                        &net.client,
+                        &net.api,
+                        &net.account,
+                        ty.jmap_name(),
+                        c,
+                        props,
+                        &net.limits,
+                    )?
+                    .list,
+                );
+                crate::progress::advance(c.len() as u64);
+            }
+            Ok(out)
+        })();
+        crate::progress::finish();
+        res
     }
 
     pub fn target_get_all(net: &Net, ty: ObjectType) -> Result<Vec<Value>, JmapError> {

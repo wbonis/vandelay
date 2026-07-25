@@ -65,6 +65,7 @@ pub fn reconcile(
                 tmatched.insert(tid.clone());
                 maps.insert(ty, *local, JmapId(tid));
                 counts.skipped += 1;
+                crate::progress::advance(1);
             }
             None => to_create.push((*local, *is_default)),
         }
@@ -115,6 +116,7 @@ pub fn reconcile(
             logger.warn(&format!("{} {cid} not created: {err}", ty.jmap_name()));
             counts.failed += 1;
         }
+        crate::progress::advance(to_create.len() as u64);
     }
 
     let objs: Vec<TargetObj> = targets
