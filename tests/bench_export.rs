@@ -156,6 +156,7 @@ fn run_export(threads: usize, target_id: &str, localpart: &str) -> Run {
         logger: Logger::from_flags(false, 0),
     };
     let config = ExportConfig {
+        acl: false,
         connect: ConnectConfig {
             url: base_url().to_owned(),
             auth: Auth::Basic {
@@ -280,6 +281,7 @@ fn bench_export_remote() {
             logger: Logger::from_flags(false, bench_verbose()),
         };
         let config = ExportConfig {
+            acl: false,
             connect: ConnectConfig {
                 url: url.clone(),
                 auth: Auth::Basic {
