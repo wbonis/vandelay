@@ -56,7 +56,10 @@ Because the archive is a self-contained SQLite file that fully describes one acc
 - **One target protocol:** JMAP, with type-by-type stateless re-matching on every run.
 - **Convergent:** Re-running an interrupted import or export picks up where it left off without bookkeeping flags.
 - **Multi-threaded, no async runtime:** Blocking HTTP with per-server concurrency caps respected automatically.
+- **Batched email upload:** Targets advertising RFC 9404 (`urn:ietf:params:jmap:blob`) get whole batches of messages per request instead of two requests per message.
 - **Content-addressed blobs:** Emails, sieve scripts and file-storage payloads are stored once by BLAKE3 hash and deduplicated across the archive.
+- **Mailbox ACLs:** IMAP `GETACL` entries can be captured on import and pushed to a JMAP target as `shareWith` (both opt-in via `--acl`).
+- **Live progress:** `--progress` reports processed/total, percentage, rate and ETA per object type.
 - **Dry-run everywhere:** Every command supports `--dry-run` to compute the full plan without writing.
 - **Source-change protection:** An archive remembers which account it was filled from; pointing it at a different one fails unless explicitly permitted.
 - **Read-only inspection:** A built-in `inspect` command dumps any object type from an archive for verification.
@@ -282,6 +285,12 @@ Stateless re-export of `ARCHIVE` into a target JMAP server account. The default 
 
 `--acl` pushes mailbox ACLs captured by `import imap --acl` to the target as JMAP `Mailbox` `shareWith`, merging into whatever the target mailbox already has rather than replacing it outright. Requires the target to advertise `urn:ietf:params:jmap:mail:share` and `urn:ietf:params:jmap:principals`; otherwise it's silently skipped.
 
+#### Email throughput
+
+Servers cap in-flight requests per user (`maxConcurrentRequests`, commonly 4), so for mail the request count — not bandwidth — sets the ceiling. The per-message path costs two requests per email (blob upload plus `Email/import`). When the target advertises RFC 9404 (`urn:ietf:params:jmap:blob`), export switches automatically to batched upload: one `Blob/upload` creates a whole batch of blobs and one `Email/import` imports them all. Batch size adapts to the server's `maxObjectsInSet` and `maxSizeRequest` limits and to the worker count; no flag is needed, and a target without the capability keeps the per-message path. If a batch comes back `overQuota`, the affected messages fall back to per-message upload rather than failing the run.
+
+Measurements behind this are in [`docs/jmap-migration-performance.html`](docs/jmap-migration-performance.html) (also as [PDF](docs/jmap-migration-performance.pdf)).
+
 ### Inspect
 
 ```
@@ -334,6 +343,18 @@ cargo test --test mock_jmap -- --ignored
 ```
 
 `--test-threads=1` is mandatory, not just advisory: within a binary every test shares a single per-binary container, and each test provisions then tears down the same disposable `vandelay.org` domain (and opens the archive with SQLite `EXCLUSIVE` locking). Separate binaries are isolated (each boots its own container on dynamic host ports), so plain `cargo test --test <name>` invocations are safe to run one after another.
+
+### Throughput benchmarks
+
+Three further binaries measure mails/second rather than asserting behaviour. They are `#[ignore]`d like the tests above, and they **write to the account they target**, so point them at a disposable one:
+
+```sh
+cargo test --test bench_export    -- --ignored --test-threads=1   # export pipeline per --threads setting
+cargo test --test bench_transport -- --ignored --test-threads=1   # request layouts / batching, drives ureq directly
+cargo test --test bench_imap      -- --ignored --test-threads=1   # IMAP APPEND, for comparison against JMAP import
+```
+
+`bench_export_thousand_emails` boots its own Stalwart container (Docker); all other cases talk to a remote server configured in `.env` via `JMAP_SERVER` / `JMAP_ACCOUNT` / `JMAP_PASSWORD`. Corpus size and shape are tunable through `BENCH_MAILS`, `BENCH_THREADS`, `BENCH_MSG_BYTES`, `BENCH_BATCH` and `BENCH_MODES`.
 
 ## License
 

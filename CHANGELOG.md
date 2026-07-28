@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Added
+- `--acl`: `import imap` captures RFC 4314 `GETACL` entries, `export` pushes them to the target as JMAP `Mailbox` `shareWith` (both opt-in, silently skipped when the server lacks the capability).
+- `--repair-text-hash`: re-hash blobs hand-edited outside vandelay (e.g. a raw SQL `UPDATE` against the archive) before syncing.
+- `--progress`: live per-object-type progress on stderr with processed/total, percentage, rate and ETA.
+- Batched email upload via `Blob/upload` (RFC 9404) when the target advertises `urn:ietf:params:jmap:blob`, replacing two requests per message with one batch upload plus one `Email/import`; falls back to the per-message path on `overQuota`.
+- Throughput benchmark binaries (`bench_export`, `bench_transport`, `bench_imap`) and a write-up of the measurements under `docs/`.
+
+### Changed
+- Export runs its JMAP requests through the shared worker pool, so `-j/--threads` now applies to export as well as import. The pool moved from `sync::import_jmap::pool` to `sync::pool`.
+
 ## [1.0.7] - 2026-07-26
 
 ### Added
